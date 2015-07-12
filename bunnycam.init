@@ -1,0 +1,24 @@
+#!/bin/sh
+
+case "${1}" in
+  start)
+    start-stop-daemon -S -p /var/run/bunnycam.pid -m -b --exec /usr/local/bin/bunnycam
+    ;;
+
+  stop)
+    start-stop-daemon -K -p /var/run/bunnycam.pid
+    ;;
+
+  status)
+    start-stop-daemon -T -p /var/run/bunnycam.pid
+    ;;
+
+  restart)
+    $0 stop
+    $0 start
+    ;;
+
+  *)
+    exit 1
+    ;;
+esac
