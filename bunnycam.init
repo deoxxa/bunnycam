@@ -12,6 +12,11 @@ case "${1}" in
 
   status)
     start-stop-daemon -T -p /var/run/bunnycam.pid
+    if [ $? ]; then
+      echo "Stopped"
+    else
+      echo "Running"
+    fi
     ;;
 
   restart)
