@@ -1,28 +1,28 @@
 <!DOCTYPE html>
 <html>
-	<head>
-		<title>bunnycam</title>
-		<meta name="viewport" content="width=device-width, initial-scale=1">
-		<style type="text/css">
+  <head>
+    <title>bunnycam</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style type="text/css">
 body {
-	font-family: helvetica;
-	margin: 0px;
-	padding: 0px;
+  font-family: helvetica;
+  margin: 0px;
+  padding: 0px;
 }
-		</style>
-	</head>
-	<body>
-		<center>
-			<h1>Bunny</h1>
-			<img src="/latest.jpeg" id="latest" />
-		</center>
-		<script>
+    </style>
+  </head>
+  <body>
+    <center>
+      <h1>Bunny</h1>
+      <img src="/latest.jpeg" id="latest" />
+    </center>
+    <script>
 var img = document.getElementById("latest");
 
 var stream = new EventSource("/stream.hack");
 stream.addEventListener("image", function(e) {
-	img.src = "data:image/jpeg;base64," + e.data;
+  img.src = "data:image/jpeg;base64," + e.data;
 });
-		</script>
-	</body>
+    </script>
+  </body>
 </html>
