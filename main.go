@@ -10,6 +10,10 @@ import (
 	"sort"
 	"time"
 
+	"github.com/GeertJohan/go.rice"
+	"github.com/codegangsta/negroni"
+	"github.com/gorilla/mux"
+	"github.com/meatballhat/negroni-logrus"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
@@ -35,9 +39,9 @@ func main() {
 		}
 	}()
 
-	m := http.NewServeMux()
+	m := mux.NewRouter()
 
-	m.HandleFunc("/latest.jpeg", func(w http.ResponseWriter, r *http.Request) {
+	m.Path("/latest.jpeg").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d, err := os.Open(*imageDirectory)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -69,6 +73,14 @@ func main() {
 			return
 		}
 	})
+
+	m.NotFoundHandler = http.FileServer(rice.MustFindBox("static").HTTPBox())
+
+	n := negroni.New()
+
+	n.Use(negroni.NewRecovery())
+	n.Use(negronilogrus.NewMiddleware())
+	n.UseHandler(m)
 
 	if err := http.ListenAndServe(*addr, m); err != nil {
 		panic(err)
