@@ -3,15 +3,18 @@ package main // import "fknsrs.biz/p/bunnycam"
 import (
 	"encoding/base64"
 	"fmt"
+	"html/template"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/GeertJohan/go.rice"
+	"github.com/Sirupsen/logrus"
 	"github.com/bernerdschaefer/eventsource"
 	"github.com/codegangsta/negroni"
 	"github.com/gorilla/mux"
@@ -24,106 +27,134 @@ var (
 	app            = kingpin.New("bunnycam", "Take pictures of a rabbit. Enjoy them.")
 	imageDirectory = app.Flag("images", "Where to read images from.").Default("/var/lib/bunnycam/data").OverrideDefaultFromEnvar("IMAGE_DIRECTORY").ExistingDir()
 	addr           = app.Flag("addr", "Address to listen on.").Default(":3000").OverrideDefaultFromEnvar("ADDR").String()
+	videoDevices   = app.Flag("video_device", "Device to use for video.").Default("/dev/video0").OverrideDefaultFromEnvar("VIDEO_DEVICE").ExistingFiles()
 )
+
+type imageUpdate struct {
+	ID   int
+	File string
+	Time time.Time
+}
 
 func main() {
 	kingpin.MustParse(app.Parse(os.Args[1:]))
 
-	w, err := fsnotify.NewWatcher()
+	templateData, err := rice.MustFindBox("static").String("index.html")
 	if err != nil {
 		panic(err)
 	}
-	if err := w.Watch(*imageDirectory); err != nil {
-		panic(err)
-	}
 
-	var latestImage string
-	watchers := make(map[chan string]bool)
+	indexTemplate := template.Must(template.New("index").Parse(templateData))
 
-	go func() {
-		for {
-			exec.Command(
-				"streamer",
-				"-t", "99999999",
-				"-r", "1",
-				"-o", path.Join(*imageDirectory, fmt.Sprintf("snap_%d_00000000.jpeg", time.Now().Unix())),
-			).Run()
+	latestImage := make([]imageUpdate, len(*videoDevices))
+	watchers := make(map[chan imageUpdate]bool)
 
-			time.Sleep(time.Second)
+	for id, videoDevice := range *videoDevices {
+		thisDirectory := path.Join(*imageDirectory, fmt.Sprintf("cam%d", id))
+
+		if err := os.Mkdir(thisDirectory, 0755); err != nil && !os.IsExist(err) {
+			panic(err)
 		}
-	}()
 
-	go func() {
-		for ev := range w.Event {
-			if ev.IsCreate() {
-				latestImage = ev.Name
+		go func(id int, videoDevice, thisDirectory string) {
+			for {
+				logrus.WithFields(logrus.Fields{
+					"id":        id,
+					"device":    videoDevice,
+					"directory": thisDirectory,
+				}).Info("opening webcam")
 
-				for c := range watchers {
-					c <- latestImage
+				err := exec.Command(
+					"streamer",
+					"-c", videoDevice,
+					"-t", "60",
+					"-r", "1",
+					"-o", path.Join(thisDirectory, fmt.Sprintf("snap_%d_00.jpeg", time.Now().Unix())),
+				).Run()
+
+				if err != nil {
+					logrus.WithFields(logrus.Fields{
+						"id":        id,
+						"device":    videoDevice,
+						"directory": thisDirectory,
+						"error":     err.Error(),
+					}).Info("streamer crashed")
+				}
+
+				time.Sleep(time.Second)
+			}
+		}(id, videoDevice, thisDirectory)
+
+		go func(id int) {
+			w, err := fsnotify.NewWatcher()
+			if err != nil {
+				panic(err)
+			}
+			if err := w.Watch(thisDirectory); err != nil {
+				panic(err)
+			}
+
+			for ev := range w.Event {
+				if ev.IsCreate() {
+					latestImage[id] = imageUpdate{
+						ID:   id,
+						File: ev.Name,
+						Time: time.Now(),
+					}
+
+					for c := range watchers {
+						c <- latestImage[id]
+					}
 				}
 			}
-		}
-	}()
+		}(id)
+	}
 
 	m := mux.NewRouter()
 
-	m.Path("/latest.jpeg").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f, err := os.Open(latestImage)
+	m.Path("/").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/html")
+		w.WriteHeader(http.StatusOK)
+
+		if err := indexTemplate.Execute(w, struct{ Cameras []imageUpdate }{latestImage}); err != nil {
+			panic(err)
+		}
+	})
+
+	m.Path("/latest/{id:[0-9]+}.jpeg").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+
+		var id int
+		if idInt64, err := strconv.ParseInt(vars["id"], 10, 8); err != nil {
+			panic(err)
+		} else {
+			id = int(idInt64)
+		}
+
+		if id >= len(*videoDevices) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		f, err := os.Open(latestImage[id].File)
 		if err != nil {
 			panic(err)
 		}
 
 		w.Header().Set("content-type", "image/jpeg")
-		w.Header().Set("refresh", "1")
 
 		if _, err := io.Copy(w, f); err != nil {
 			panic(err)
 		}
 	})
 
-	m.Path("/stream.mjpeg").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "video/x-motion-jpeg")
-		w.WriteHeader(http.StatusOK)
-
-		c := make(chan string, 10)
-		c <- latestImage
-
-		watchers[c] = true
-		defer delete(watchers, c)
-
-		cn := w.(http.CloseNotifier).CloseNotify()
-
-		for {
-			select {
-			case n, ok := <-c:
-				if !ok {
-					break
-				}
-
-				f, err := os.Open(n)
-				if err != nil {
-					panic(err)
-				}
-
-				if _, err := io.Copy(w, f); err != nil {
-					panic(err)
-				}
-
-				w.(http.Flusher).Flush()
-			case <-cn:
-				return
-			}
-		}
-	})
-
-	m.Path("/stream.hack").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	m.Path("/stream").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		enc := eventsource.NewEncoder(w)
 
 		w.Header().Set("content-type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 
-		c := make(chan string, 10)
-		c <- latestImage
+		c := make(chan imageUpdate, 10)
 
 		watchers[c] = true
 		defer delete(watchers, c)
@@ -132,12 +163,12 @@ func main() {
 
 		for {
 			select {
-			case n, ok := <-c:
+			case e, ok := <-c:
 				if !ok {
 					break
 				}
 
-				f, err := os.Open(n)
+				f, err := os.Open(e.File)
 				if err != nil {
 					panic(err)
 				}
@@ -149,7 +180,12 @@ func main() {
 
 				ev := eventsource.Event{
 					Type: "image",
-					Data: []byte(base64.StdEncoding.EncodeToString(d)),
+					Data: []byte(fmt.Sprintf(
+						"%d::%s::%s",
+						e.ID,
+						e.Time.Format(time.RFC3339Nano),
+						base64.StdEncoding.EncodeToString(d),
+					)),
 				}
 
 				if err := enc.Encode(ev); err != nil {
@@ -168,8 +204,6 @@ func main() {
 			}
 		}
 	})
-
-	m.NotFoundHandler = http.FileServer(rice.MustFindBox("static").HTTPBox())
 
 	n := negroni.New()
 

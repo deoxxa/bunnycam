@@ -9,19 +9,48 @@ body {
   margin: 0px;
   padding: 0px;
 }
+
+ul {
+  margin: 0px;
+  padding: 0px;
+  list-style: none;
+  text-align: center;
+}
+
+li {
+  margin: 0px;
+  padding: 0px;
+  display: inline-block;
+  text-align: center;
+}
     </style>
   </head>
   <body>
     <center>
       <h1>Bunny</h1>
-      <img src="/latest.jpeg" id="latest" />
-    </center>
-    <script>
-var img = document.getElementById("latest");
 
-var stream = new EventSource("/stream.hack");
-stream.addEventListener("image", function(e) {
-  img.src = "data:image/jpeg;base64," + e.data;
+      <ul>
+{{range .Cameras}}
+        <li id="camera-{{.ID}}">
+          <time>{{.Time}}</time>
+          <br>
+          <img src="/latest/{{.ID}}.jpeg" />
+        </li>
+{{end}}
+      </ul>
+    </center>
+
+    <script>
+var stream = new EventSource('/stream');
+stream.addEventListener('image', function(e) {
+  var bits = e.data.split('::');
+
+  var id = bits[0],
+      time = bits[1],
+      data = bits[2];
+
+  document.querySelector('#camera-' + id + ' time').innerText = time;
+  document.querySelector('#camera-' + id + ' img').src = 'data:image/jpeg;base64,' + data;
 });
     </script>
   </body>
