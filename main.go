@@ -121,6 +121,12 @@ func main() {
 		}
 	})
 
+	m.Path("/reset").Methods("POST").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := exec.Command("killall", "streamer").Run(); err != nil {
+			panic(err)
+		}
+	})
+
 	m.Path("/latest/{id:[0-9]+}.jpeg").Methods("GET").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 

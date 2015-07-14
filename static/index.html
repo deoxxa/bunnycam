@@ -38,6 +38,8 @@ li {
         </li>
 {{end}}
       </ul>
+
+      <button id="reset">Reset</button>
     </center>
 
     <script>
@@ -51,6 +53,19 @@ stream.addEventListener('image', function(e) {
 
   document.querySelector('#camera-' + id + ' time').innerText = time;
   document.querySelector('#camera-' + id + ' img').src = 'data:image/jpeg;base64,' + data;
+});
+
+var reset = document.querySelector('#reset');
+
+reset.addEventListener('click', function(e) {
+  reset.disabled = true;
+
+  var xhr = new XMLHttpRequest();
+  xhr.addEventListener('load', function() {
+    reset.disabled = false;
+  });
+  xhr.open('POST', '/reset');
+  xhr.send();
 });
     </script>
   </body>
