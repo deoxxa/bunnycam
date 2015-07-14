@@ -189,7 +189,7 @@ func main() {
 					Data: []byte(fmt.Sprintf(
 						"%d::%s::%s",
 						e.ID,
-						e.Time.Format(time.RFC3339Nano),
+						e.Time.String(),
 						base64.StdEncoding.EncodeToString(d),
 					)),
 				}
