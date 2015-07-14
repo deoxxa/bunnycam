@@ -1,0 +1,13 @@
+description "bunnycam"
+
+start on filesystem and static-network-up
+stop on runlevel [06]
+
+console log
+respawn
+
+setuid bunnycam
+
+script
+  /usr/bin/bunnycam --images /var/lib/bunnycam/images
+end script
