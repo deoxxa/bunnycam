@@ -11,8 +11,10 @@ import (
 	"os/exec"
 	"path"
 	"strconv"
+	"sync"
 	"time"
 
+	"fknsrs.biz/p/multierror"
 	"github.com/GeertJohan/go.rice"
 	"github.com/Sirupsen/logrus"
 	"github.com/bernerdschaefer/eventsource"
@@ -28,6 +30,7 @@ var (
 	imageDirectory = app.Flag("images", "Where to read images from.").Default("/var/lib/bunnycam/data").OverrideDefaultFromEnvar("IMAGE_DIRECTORY").ExistingDir()
 	addr           = app.Flag("addr", "Address to listen on.").Default(":3000").OverrideDefaultFromEnvar("ADDR").String()
 	videoDevices   = app.Flag("video_device", "Device to use for video.").Default("/dev/video0").OverrideDefaultFromEnvar("VIDEO_DEVICE").ExistingFiles()
+	usbDevices     = app.Flag("usb_device", "Device to use for resetting USB.").Default("/dev/bus/usb/004/005").OverrideDefaultFromEnvar("USB_DEVICE").ExistingFiles()
 )
 
 type imageUpdate struct {
@@ -81,7 +84,7 @@ func main() {
 					}).Info("streamer crashed")
 				}
 
-				time.Sleep(time.Second)
+				time.Sleep(time.Second * 5)
 			}
 		}(id, videoDevice, thisDirectory)
 
@@ -124,6 +127,26 @@ func main() {
 	m.Path("/reset").Methods("POST").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := exec.Command("killall", "streamer").Run(); err != nil {
 			panic(err)
+		}
+
+		var m multierror.MultiError
+
+		var wg sync.WaitGroup
+		for _, d := range *usbDevices {
+			wg.Add(1)
+
+			go func(d string) {
+				defer wg.Done()
+
+				if err := exec.Command("usbreset", d).Run(); err != nil {
+					m = append(m, err)
+				}
+			}(d)
+		}
+		wg.Wait()
+
+		if m != nil {
+			panic(m)
 		}
 	})
 
